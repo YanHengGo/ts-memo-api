@@ -181,3 +181,17 @@ curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/daily?date=2026-
 curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/daily-view?date=2026-01-25" \\
   -H "Authorization: Bearer $TOKEN"
 ```
+
+### curl例（calendar-summary）
+
+```bash
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/calendar-summary?from=2026-01-01&to=2026-01-31" \\
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### calendar status 定義
+
+- white: 未来日 or 対象タスクなし
+- green: 完了 = 全タスク
+- yellow: 一部完了
+- red: 未完了
