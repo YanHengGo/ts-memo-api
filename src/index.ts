@@ -138,6 +138,27 @@ const isValidDate = (value: string): boolean => {
   return parsed.toISOString().slice(0, 10) === value;
 };
 
+const weekdayInfo = (value: string): { label: string; mask: number } => {
+  const date = new Date(`${value}T00:00:00Z`);
+  const day = date.getUTCDay(); // 0=Sun..6=Sat
+  switch (day) {
+    case 1:
+      return { label: "Mon", mask: 2 };
+    case 2:
+      return { label: "Tue", mask: 4 };
+    case 3:
+      return { label: "Wed", mask: 8 };
+    case 4:
+      return { label: "Thu", mask: 16 };
+    case 5:
+      return { label: "Fri", mask: 32 };
+    case 6:
+      return { label: "Sat", mask: 64 };
+    default:
+      return { label: "Sun", mask: 1 };
+  }
+};
+
 app.get("/api/v1/children", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
 
@@ -301,6 +322,81 @@ app.get("/api/v1/children/:childId/tasks", async (req, res) => {
     return res.json(result.rows);
   } catch (error) {
     console.error("list tasks failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
+app.get("/api/v1/children/:childId/daily-view", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId } = req.params;
+  const dateParam = req.query.date;
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof dateParam !== "string" || !isValidDate(dateParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const { label: weekday, mask: todayMask } = weekdayInfo(dateParam);
+
+  try {
+    const childResult = await pool.query(
+      "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
+      [childId, userId],
+    );
+    if (childResult.rowCount === 0) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    const tasksResult = await pool.query(
+      `SELECT id, name, subject, default_minutes, days_mask
+       FROM tasks
+       WHERE child_id = $1
+         AND user_id = $2
+         AND is_archived = false
+         AND (days_mask & $3) != 0
+       ORDER BY subject ASC, name ASC`,
+      [childId, userId, todayMask],
+    );
+
+    const logsResult = await pool.query(
+      "SELECT task_id, minutes FROM study_logs WHERE child_id = $1 AND user_id = $2 AND date = $3",
+      [childId, userId, dateParam],
+    );
+
+    const logByTaskId = new Map<string, number>();
+    for (const row of logsResult.rows) {
+      logByTaskId.set(row.task_id, row.minutes);
+    }
+
+    const tasks = tasksResult.rows.map((task) => {
+      const loggedMinutes = logByTaskId.get(task.id);
+      if (loggedMinutes !== undefined) {
+        return {
+          task_id: task.id,
+          name: task.name,
+          subject: task.subject,
+          default_minutes: task.default_minutes,
+          days_mask: task.days_mask,
+          is_done: true,
+          minutes: loggedMinutes,
+        };
+      }
+      return {
+        task_id: task.id,
+        name: task.name,
+        subject: task.subject,
+        default_minutes: task.default_minutes,
+        days_mask: task.days_mask,
+        is_done: false,
+        minutes: task.default_minutes,
+      };
+    });
+
+    return res.json({ date: dateParam, weekday, tasks });
+  } catch (error) {
+    console.error("get daily view failed", error);
     return res.status(500).json({ error: "internal server error" });
   }
 });

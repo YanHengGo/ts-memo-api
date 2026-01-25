@@ -174,3 +174,10 @@ curl -s -X PUT "http://localhost:3000/api/v1/children/$CHILD_ID/daily?date=2026-
 curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/daily?date=2026-01-25" \\
   -H "Authorization: Bearer $TOKEN"
 ```
+
+### curl例（daily-view）
+
+```bash
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/daily-view?date=2026-01-25" \\
+  -H "Authorization: Bearer $TOKEN"
+```
