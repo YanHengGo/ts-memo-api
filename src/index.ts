@@ -143,19 +143,19 @@ const weekdayInfo = (value: string): { label: string; mask: number } => {
   const day = date.getUTCDay(); // 0=Sun..6=Sat
   switch (day) {
     case 1:
-      return { label: "Mon", mask: 1 };
+      return { label: "Mon", mask: 2 };
     case 2:
-      return { label: "Tue", mask: 2 };
+      return { label: "Tue", mask: 4 };
     case 3:
-      return { label: "Wed", mask: 4 };
+      return { label: "Wed", mask: 8 };
     case 4:
-      return { label: "Thu", mask: 8 };
+      return { label: "Thu", mask: 16 };
     case 5:
-      return { label: "Fri", mask: 16 };
+      return { label: "Fri", mask: 32 };
     case 6:
-      return { label: "Sat", mask: 32 };
+      return { label: "Sat", mask: 64 };
     default:
-      return { label: "Sun", mask: 64 };
+      return { label: "Sun", mask: 1 };
   }
 };
 
