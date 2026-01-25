@@ -127,6 +127,17 @@ app.post("/api/v1/auth/login", async (req, res) => {
 app.use("/api/v1/children", authMiddleware);
 app.use("/api/v1/tasks", authMiddleware);
 
+const isValidDate = (value: string): boolean => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return false;
+  }
+  return parsed.toISOString().slice(0, 10) === value;
+};
+
 app.get("/api/v1/children", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
 
@@ -291,6 +302,138 @@ app.get("/api/v1/children/:childId/tasks", async (req, res) => {
   } catch (error) {
     console.error("list tasks failed", error);
     return res.status(500).json({ error: "internal server error" });
+  }
+});
+
+app.get("/api/v1/children/:childId/daily", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId } = req.params;
+  const dateParam = req.query.date;
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof dateParam !== "string" || !isValidDate(dateParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  try {
+    const childResult = await pool.query(
+      "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
+      [childId, userId],
+    );
+    if (childResult.rowCount === 0) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    const result = await pool.query(
+      `SELECT task_id, minutes
+       FROM study_logs
+       WHERE child_id = $1 AND user_id = $2 AND date = $3
+       ORDER BY created_at ASC`,
+      [childId, userId, dateParam],
+    );
+
+    return res.json({ date: dateParam, items: result.rows });
+  } catch (error) {
+    console.error("get daily failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
+app.put("/api/v1/children/:childId/daily", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId } = req.params;
+  const dateParam = req.query.date;
+  const { items } = req.body ?? {};
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof dateParam !== "string" || !isValidDate(dateParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const taskIdSet = new Set<string>();
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    if (typeof item.task_id !== "string" || !isUuid(item.task_id)) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    if (taskIdSet.has(item.task_id)) {
+      return res
+        .status(400)
+        .json({ error: "Duplicate task_id is not allowed" });
+    }
+    taskIdSet.add(item.task_id);
+    if (typeof item.minutes !== "number" || !Number.isInteger(item.minutes)) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    if (item.minutes < 1) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const childResult = await client.query(
+      "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
+      [childId, userId],
+    );
+    if (childResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    if (items.length > 0) {
+      const taskIds = Array.from(taskIdSet);
+      const taskResult = await client.query(
+        "SELECT id FROM tasks WHERE user_id = $1 AND child_id = $2 AND id = ANY($3::uuid[])",
+        [userId, childId, taskIds],
+      );
+      if (taskResult.rowCount !== taskIds.length) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "not_found" });
+      }
+    }
+
+    await client.query(
+      "DELETE FROM study_logs WHERE child_id = $1 AND user_id = $2 AND date = $3",
+      [childId, userId, dateParam],
+    );
+
+    if (items.length > 0) {
+      const values: unknown[] = [];
+      const placeholders = items
+        .map((item, idx) => {
+          const baseIndex = idx * 5;
+          values.push(userId, childId, item.task_id, dateParam, item.minutes);
+          return `($${baseIndex + 1}, $${baseIndex + 2}, $${baseIndex + 3}, $${baseIndex + 4}, $${baseIndex + 5})`;
+        })
+        .join(", ");
+
+      await client.query(
+        `INSERT INTO study_logs (user_id, child_id, task_id, date, minutes)
+         VALUES ${placeholders}`,
+        values,
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.json({ date: dateParam, saved_count: items.length });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("put daily failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  } finally {
+    client.release();
   }
 });
 

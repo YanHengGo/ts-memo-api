@@ -98,6 +98,7 @@ Database
 psql "$DATABASE_URL" -f migrations/001_create_users.sql
 psql "$DATABASE_URL" -f migrations/002_create_children.sql
 psql "$DATABASE_URL" -f migrations/003_create_tasks.sql
+psql "$DATABASE_URL" -f migrations/004_create_study_logs.sql
 ```
 
 ### curl例（login → token → children）
@@ -145,5 +146,31 @@ curl -s -X PATCH http://localhost:3000/api/v1/tasks/$TASK_ID \\
 
 # list archived tasks
 curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/tasks?archived=true" \\
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### curl例（daily PUT → GET）
+
+```bash
+# create child
+CHILD_ID=$(curl -s -X POST http://localhost:3000/api/v1/children \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"Taro","grade":"1"}' | jq -r .id)
+
+# create task
+TASK_ID=$(curl -s -X POST http://localhost:3000/api/v1/children/$CHILD_ID/tasks \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"Math Drill","subject":"math","default_minutes":20,"days_mask":62}' | jq -r .id)
+
+# PUT daily
+curl -s -X PUT "http://localhost:3000/api/v1/children/$CHILD_ID/daily?date=2026-01-25" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"items":[{"task_id":"'"$TASK_ID"'","minutes":20}]}'
+
+# GET daily
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/daily?date=2026-01-25" \\
   -H "Authorization: Bearer $TOKEN"
 ```
