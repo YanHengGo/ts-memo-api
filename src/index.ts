@@ -159,6 +159,34 @@ const weekdayInfo = (value: string): { label: string; mask: number } => {
   }
 };
 
+const weekdayMaskMonStart = (value: string): number => {
+  const date = new Date(`${value}T00:00:00Z`);
+  const day = date.getUTCDay(); // 0=Sun..6=Sat
+  switch (day) {
+    case 1:
+      return 1;
+    case 2:
+      return 2;
+    case 3:
+      return 4;
+    case 4:
+      return 8;
+    case 5:
+      return 16;
+    case 6:
+      return 32;
+    default:
+      return 64;
+  }
+};
+
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 app.get("/api/v1/children", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
 
@@ -397,6 +425,110 @@ app.get("/api/v1/children/:childId/daily-view", async (req, res) => {
     return res.json({ date: dateParam, weekday, tasks });
   } catch (error) {
     console.error("get daily view failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
+app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId } = req.params;
+  const fromParam = req.query.from;
+  const toParam = req.query.to;
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof fromParam !== "string" || !isValidDate(fromParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof toParam !== "string" || !isValidDate(toParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const fromDate = new Date(`${fromParam}T00:00:00Z`);
+  const toDate = new Date(`${toParam}T00:00:00Z`);
+  if (fromDate.getTime() > toDate.getTime()) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const dayCount =
+    Math.floor((toDate.getTime() - fromDate.getTime()) / 86400000) + 1;
+  if (dayCount > 62) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  try {
+    const childResult = await pool.query(
+      "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
+      [childId, userId],
+    );
+    if (childResult.rowCount === 0) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    const tasksResult = await pool.query(
+      `SELECT id, days_mask
+       FROM tasks
+       WHERE child_id = $1 AND user_id = $2 AND is_archived = false`,
+      [childId, userId],
+    );
+
+    const logsResult = await pool.query(
+      `SELECT task_id, date
+       FROM study_logs
+       WHERE child_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4`,
+      [childId, userId, fromParam, toParam],
+    );
+
+    const logsByDate = new Map<string, Set<string>>();
+    for (const row of logsResult.rows) {
+      const dateKey = row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date);
+      const set = logsByDate.get(dateKey) ?? new Set<string>();
+      set.add(row.task_id);
+      logsByDate.set(dateKey, set);
+    }
+
+    const todayLocal = formatLocalDate(new Date());
+    const days: Array<{ date: string; status: string; total: number; done: number }> = [];
+
+    for (let i = 0; i < dayCount; i += 1) {
+      const current = new Date(fromDate);
+      current.setUTCDate(fromDate.getUTCDate() + i);
+      const dateKey = current.toISOString().slice(0, 10);
+      const todayMask = weekdayMaskMonStart(dateKey);
+
+      const targetTasks = tasksResult.rows.filter(
+        (task) => (task.days_mask & todayMask) !== 0,
+      );
+      const total = targetTasks.length;
+
+      let done = 0;
+      const doneSet = logsByDate.get(dateKey);
+      if (doneSet && total > 0) {
+        for (const task of targetTasks) {
+          if (doneSet.has(task.id)) {
+            done += 1;
+          }
+        }
+      }
+
+      let status = "red";
+      if (dateKey > todayLocal) {
+        status = "white";
+      } else if (total === 0) {
+        status = "white";
+      } else if (done === total) {
+        status = "green";
+      } else if (done > 0) {
+        status = "yellow";
+      }
+
+      days.push({ date: dateKey, status, total, done });
+    }
+
+    return res.json({ from: fromParam, to: toParam, days });
+  } catch (error) {
+    console.error("get calendar summary failed", error);
     return res.status(500).json({ error: "internal server error" });
   }
 });
