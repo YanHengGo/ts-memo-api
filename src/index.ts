@@ -180,11 +180,8 @@ const weekdayMaskSunStart = (value: string): number => {
   }
 };
 
-const formatLocalDate = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+const formatUtcDate = (date: Date): string => {
+  return date.toISOString().slice(0, 10);
 };
 
 app.get("/api/v1/children", async (req, res) => {
@@ -488,7 +485,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
       logsByDate.set(dateKey, set);
     }
 
-    const todayLocal = formatLocalDate(new Date());
+    const todayUtc = formatUtcDate(new Date());
     const days: Array<{ date: string; status: string; total: number; done: number }> = [];
 
     for (let i = 0; i < dayCount; i += 1) {
@@ -513,7 +510,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
       }
 
       let status = "red";
-      if (dateKey > todayLocal) {
+      if (dateKey > todayUtc) {
         status = "white";
       } else if (total === 0) {
         status = "white";
