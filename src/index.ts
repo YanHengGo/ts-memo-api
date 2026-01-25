@@ -1,9 +1,24 @@
 import bcrypt from "bcrypt";
+import cors from "cors";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { pool } from "./db";
 
 const app = express();
+const allowedOrigins = new Set(["http://localhost:3001", "http://localhost:3000"]);
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: false,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
