@@ -88,3 +88,37 @@ Database
 - 実際に家庭で使用しながら改善予定
 - ポートフォリオ目的だけでなく、**継続運用を前提**
 
+---
+
+## ✅ API検証（MVP）
+
+### Migration
+
+```bash
+psql "$DATABASE_URL" -f migrations/001_create_users.sql
+psql "$DATABASE_URL" -f migrations/002_create_children.sql
+```
+
+### curl例（login → token → children）
+
+```bash
+# signup
+curl -s -X POST http://localhost:3000/api/v1/auth/signup \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"parent@example.com","password":"secret123"}'
+
+# login
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \\
+  -H "Content-Type: application/json" \\
+  -d '{"email":"parent@example.com","password":"secret123"}' | jq -r .token)
+
+# create child
+curl -s -X POST http://localhost:3000/api/v1/children \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"Taro","grade":"1"}'
+
+# list children
+curl -s -X GET http://localhost:3000/api/v1/children \\
+  -H "Authorization: Bearer $TOKEN"
+```
