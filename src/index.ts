@@ -12,6 +12,11 @@ app.get("/health", (_req, res) => {
 
 type AuthenticatedRequest = express.Request & { userId: string };
 
+const isUuid = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+
 const authMiddleware: express.RequestHandler = (req, res, next) => {
   const authHeader = req.header("authorization");
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -164,6 +169,10 @@ app.patch("/api/v1/children/:childId", async (req, res) => {
   const { childId } = req.params;
   const { name, grade, is_active } = req.body ?? {};
 
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
   const fields: string[] = [];
   const values: unknown[] = [];
   let index = 1;
@@ -219,6 +228,10 @@ app.patch("/api/v1/children/:childId", async (req, res) => {
 app.delete("/api/v1/children/:childId", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { childId } = req.params;
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
 
   try {
     const result = await pool.query(
