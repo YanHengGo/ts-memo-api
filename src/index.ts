@@ -530,6 +530,112 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
   }
 });
 
+app.get("/api/v1/children/:childId/summary", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId } = req.params;
+  const fromParam = req.query.from;
+  const toParam = req.query.to;
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof fromParam !== "string" || !isValidDate(fromParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof toParam !== "string" || !isValidDate(toParam)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const fromDate = new Date(`${fromParam}T00:00:00Z`);
+  const toDate = new Date(`${toParam}T00:00:00Z`);
+  if (fromDate.getTime() > toDate.getTime()) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const dayCount =
+    Math.floor((toDate.getTime() - fromDate.getTime()) / 86400000) + 1;
+  if (dayCount > 366) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  try {
+    const childResult = await pool.query(
+      "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
+      [childId, userId],
+    );
+    if (childResult.rowCount === 0) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    const totalResult = await pool.query(
+      `SELECT COALESCE(SUM(minutes), 0) AS total_minutes
+       FROM study_logs
+       WHERE child_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4`,
+      [childId, userId, fromParam, toParam],
+    );
+
+    const byDayResult = await pool.query(
+      `SELECT date, SUM(minutes) AS minutes
+       FROM study_logs
+       WHERE child_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4
+       GROUP BY date
+       ORDER BY date ASC`,
+      [childId, userId, fromParam, toParam],
+    );
+
+    const bySubjectResult = await pool.query(
+      `SELECT t.subject AS subject, SUM(s.minutes) AS minutes
+       FROM study_logs s
+       JOIN tasks t ON t.id = s.task_id
+       WHERE s.child_id = $1 AND s.user_id = $2 AND s.date BETWEEN $3 AND $4
+       GROUP BY t.subject
+       ORDER BY minutes DESC`,
+      [childId, userId, fromParam, toParam],
+    );
+
+    const byTaskResult = await pool.query(
+      `SELECT s.task_id AS task_id, t.name AS name, t.subject AS subject, SUM(s.minutes) AS minutes
+       FROM study_logs s
+       JOIN tasks t ON t.id = s.task_id
+       WHERE s.child_id = $1 AND s.user_id = $2 AND s.date BETWEEN $3 AND $4
+       GROUP BY s.task_id, t.name, t.subject
+       ORDER BY minutes DESC`,
+      [childId, userId, fromParam, toParam],
+    );
+
+    const totalMinutes = Number(totalResult.rows[0]?.total_minutes ?? 0);
+
+    const byDay = byDayResult.rows.map((row) => ({
+      date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date),
+      minutes: Number(row.minutes),
+    }));
+
+    const bySubject = bySubjectResult.rows.map((row) => ({
+      subject: row.subject,
+      minutes: Number(row.minutes),
+    }));
+
+    const byTask = byTaskResult.rows.map((row) => ({
+      task_id: row.task_id,
+      name: row.name,
+      subject: row.subject,
+      minutes: Number(row.minutes),
+    }));
+
+    return res.json({
+      from: fromParam,
+      to: toParam,
+      total_minutes: totalMinutes,
+      by_day: byDay,
+      by_subject: bySubject,
+      by_task: byTask,
+    });
+  } catch (error) {
+    console.error("get summary failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
 app.get("/api/v1/children/:childId/daily", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { childId } = req.params;

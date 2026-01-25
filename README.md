@@ -195,3 +195,15 @@ curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/calendar-summary
 - green: 完了 = 全タスク
 - yellow: 一部完了
 - red: 未完了
+
+### curl例（summary）
+
+```bash
+# 1週間
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/summary?from=2026-01-01&to=2026-01-07" \\
+  -H "Authorization: Bearer $TOKEN"
+
+# 1ヶ月
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/summary?from=2026-01-01&to=2026-01-31" \\
+  -H "Authorization: Bearer $TOKEN"
+```
