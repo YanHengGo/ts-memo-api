@@ -357,6 +357,7 @@ app.put("/api/v1/children/:childId/daily", async (req, res) => {
     return res.status(400).json({ error: "invalid_request" });
   }
 
+  const taskIdSet = new Set<string>();
   for (const item of items) {
     if (typeof item !== "object" || item === null) {
       return res.status(400).json({ error: "invalid_request" });
@@ -364,6 +365,12 @@ app.put("/api/v1/children/:childId/daily", async (req, res) => {
     if (typeof item.task_id !== "string" || !isUuid(item.task_id)) {
       return res.status(400).json({ error: "invalid_request" });
     }
+    if (taskIdSet.has(item.task_id)) {
+      return res
+        .status(400)
+        .json({ error: "Duplicate task_id is not allowed" });
+    }
+    taskIdSet.add(item.task_id);
     if (typeof item.minutes !== "number" || !Number.isInteger(item.minutes)) {
       return res.status(400).json({ error: "invalid_request" });
     }
@@ -386,7 +393,7 @@ app.put("/api/v1/children/:childId/daily", async (req, res) => {
     }
 
     if (items.length > 0) {
-      const taskIds = items.map((item) => item.task_id);
+      const taskIds = Array.from(taskIdSet);
       const taskResult = await client.query(
         "SELECT id FROM tasks WHERE user_id = $1 AND child_id = $2 AND id = ANY($3::uuid[])",
         [userId, childId, taskIds],
