@@ -97,6 +97,7 @@ Database
 ```bash
 psql "$DATABASE_URL" -f migrations/001_create_users.sql
 psql "$DATABASE_URL" -f migrations/002_create_children.sql
+psql "$DATABASE_URL" -f migrations/003_create_tasks.sql
 ```
 
 ### curl例（login → token → children）
@@ -120,5 +121,29 @@ curl -s -X POST http://localhost:3000/api/v1/children \\
 
 # list children
 curl -s -X GET http://localhost:3000/api/v1/children \\
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### curl例（task 作成 → 一覧 → 更新）
+
+```bash
+# create task
+curl -s -X POST http://localhost:3000/api/v1/children/$CHILD_ID/tasks \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"Math Drill","subject":"math","default_minutes":20,"days_mask":62}'
+
+# list tasks (archived=false default)
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/tasks" \\
+  -H "Authorization: Bearer $TOKEN"
+
+# update task (archive)
+curl -s -X PATCH http://localhost:3000/api/v1/tasks/$TASK_ID \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"is_archived":true}'
+
+# list archived tasks
+curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/tasks?archived=true" \\
   -H "Authorization: Bearer $TOKEN"
 ```
