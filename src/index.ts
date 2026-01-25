@@ -159,24 +159,24 @@ const weekdayInfo = (value: string): { label: string; mask: number } => {
   }
 };
 
-const weekdayMaskMonStart = (value: string): number => {
+const weekdayMaskSunStart = (value: string): number => {
   const date = new Date(`${value}T00:00:00Z`);
   const day = date.getUTCDay(); // 0=Sun..6=Sat
   switch (day) {
     case 1:
-      return 1;
-    case 2:
       return 2;
-    case 3:
+    case 2:
       return 4;
-    case 4:
+    case 3:
       return 8;
-    case 5:
+    case 4:
       return 16;
-    case 6:
+    case 5:
       return 32;
-    default:
+    case 6:
       return 64;
+    default:
+      return 1;
   }
 };
 
@@ -495,7 +495,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
       const current = new Date(fromDate);
       current.setUTCDate(fromDate.getUTCDate() + i);
       const dateKey = current.toISOString().slice(0, 10);
-      const todayMask = weekdayMaskMonStart(dateKey);
+      const todayMask = weekdayMaskSunStart(dateKey);
 
       const targetTasks = tasksResult.rows.filter(
         (task) => (task.days_mask & todayMask) !== 0,
