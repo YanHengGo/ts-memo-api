@@ -298,6 +298,50 @@ app.patch("/api/v1/children/:childId", async (req, res) => {
   }
 });
 
+app.put("/api/v1/children/:id", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { id } = req.params;
+  const { name, grade } = req.body ?? {};
+
+  if (!isUuid(id)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof name !== "string" || !name.trim()) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (
+    grade !== undefined &&
+    grade !== null &&
+    typeof grade !== "string"
+  ) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const normalizedGrade =
+    grade === undefined || grade === null || grade.trim() === ""
+      ? null
+      : grade.trim();
+
+  try {
+    const result = await pool.query(
+      `UPDATE children
+       SET name = $1, grade = $2, updated_at = now()
+       WHERE id = $3 AND user_id = $4
+       RETURNING id, name, grade, is_active`,
+      [name.trim(), normalizedGrade, id, userId],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("update child (put) failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
 app.delete("/api/v1/children/:childId", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { childId } = req.params;
