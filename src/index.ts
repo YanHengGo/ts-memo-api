@@ -889,6 +889,76 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
   }
 });
 
+app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId, taskId } = req.params;
+  const { name, description, subject, default_minutes, days_mask, is_archived } =
+    req.body ?? {};
+
+  if (!isUuid(childId) || !isUuid(taskId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof name !== "string" || !name.trim()) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof subject !== "string" || !subject.trim()) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (description !== undefined && description !== null && typeof description !== "string") {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof default_minutes !== "number" || !Number.isInteger(default_minutes)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (default_minutes < 1) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof days_mask !== "number" || !Number.isInteger(days_mask)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (days_mask < 1 || days_mask > 127) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof is_archived !== "boolean") {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE tasks
+       SET name = $1,
+           description = $2,
+           subject = $3,
+           default_minutes = $4,
+           days_mask = $5,
+           is_archived = $6,
+           updated_at = now()
+       WHERE id = $7 AND child_id = $8 AND user_id = $9
+       RETURNING id, name, description, subject, default_minutes, days_mask, is_archived`,
+      [
+        name.trim(),
+        description ?? null,
+        subject.trim(),
+        default_minutes,
+        days_mask,
+        is_archived,
+        taskId,
+        childId,
+        userId,
+      ],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "not_found" });
+    }
+
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error("update task (put) failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
 app.patch("/api/v1/tasks/:taskId", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { taskId } = req.params;
