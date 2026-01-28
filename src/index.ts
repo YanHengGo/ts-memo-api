@@ -530,7 +530,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
     );
 
     const logsResult = await pool.query(
-      `SELECT task_id, date
+      `SELECT task_id, date::text AS date_key
        FROM study_logs
        WHERE child_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4`,
       [childId, userId, fromParam, toParam],
@@ -538,7 +538,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
 
     const logsByDate = new Map<string, Set<string>>();
     for (const row of logsResult.rows) {
-      const dateKey = row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date);
+      const dateKey = String(row.date_key);
       const set = logsByDate.get(dateKey) ?? new Set<string>();
       set.add(row.task_id);
       logsByDate.set(dateKey, set);
