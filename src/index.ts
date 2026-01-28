@@ -530,7 +530,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
     );
 
     const logsResult = await pool.query(
-      `SELECT task_id, date::text AS date_key
+      `SELECT task_id, TO_CHAR(date, 'YYYY-MM-DD') AS date_key
        FROM study_logs
        WHERE child_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4`,
       [childId, userId, fromParam, toParam],
