@@ -916,7 +916,7 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
   if (typeof days_mask !== "number" || !Number.isInteger(days_mask)) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  if (days_mask < 0 || days_mask > 127) {
+  if (days_mask < 1 || days_mask > 127) {
     return res.status(400).json({ error: "invalid_request" });
   }
   if (typeof is_archived !== "boolean") {
