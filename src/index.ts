@@ -400,7 +400,7 @@ app.get("/api/v1/children/:childId/tasks", async (req, res) => {
       `SELECT id, name, description, subject, default_minutes, days_mask, is_archived
        FROM tasks
        WHERE child_id = $1 AND user_id = $2 AND is_archived = $3
-       ORDER BY created_at ASC`,
+       ORDER BY sort_order ASC`,
       [childId, userId, archived],
     );
     return res.json(result.rows);
@@ -440,7 +440,7 @@ app.get("/api/v1/children/:childId/daily-view", async (req, res) => {
          AND user_id = $2
          AND is_archived = false
          AND (days_mask & $3) != 0
-       ORDER BY subject ASC, name ASC`,
+       ORDER BY sort_order ASC`,
       [childId, userId, todayMask],
     );
 
@@ -634,7 +634,7 @@ app.get("/api/v1/children/:childId/summary", async (req, res) => {
     );
 
     const byDayResult = await pool.query(
-      `SELECT date, SUM(minutes) AS minutes
+      `SELECT TO_CHAR(date, 'YYYY-MM-DD') AS date_key, SUM(minutes) AS minutes
        FROM study_logs
        WHERE child_id = $1 AND user_id = $2 AND date BETWEEN $3 AND $4
        GROUP BY date
@@ -665,7 +665,7 @@ app.get("/api/v1/children/:childId/summary", async (req, res) => {
     const totalMinutes = Number(totalResult.rows[0]?.total_minutes ?? 0);
 
     const byDay = byDayResult.rows.map((row) => ({
-      date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date),
+      date: String(row.date_key),
       minutes: Number(row.minutes),
     }));
 
@@ -886,6 +886,92 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
   } catch (error) {
     console.error("create task failed", error);
     return res.status(500).json({ error: "internal server error" });
+  }
+});
+
+app.put("/api/v1/children/:childId/tasks/reorder", async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const { childId } = req.params;
+  const { orders, items } = req.body ?? {};
+  const payloadOrders = Array.isArray(orders) ? orders : items;
+
+  if (!isUuid(childId)) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  if (!Array.isArray(payloadOrders) || payloadOrders.length === 0) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const taskIdSet = new Set<string>();
+  for (const item of payloadOrders) {
+    if (typeof item !== "object" || item === null) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    if (typeof item.task_id !== "string" || !isUuid(item.task_id)) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    if (taskIdSet.has(item.task_id)) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    if (typeof item.sort_order !== "number" || !Number.isInteger(item.sort_order)) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    taskIdSet.add(item.task_id);
+  }
+
+  const taskIds = Array.from(taskIdSet);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const childResult = await client.query(
+      "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
+      [childId, userId],
+    );
+    if (childResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    const taskResult = await client.query(
+      "SELECT id FROM tasks WHERE user_id = $1 AND child_id = $2 AND id = ANY($3::uuid[])",
+      [userId, childId, taskIds],
+    );
+    if (taskResult.rowCount !== taskIds.length) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    const values: unknown[] = [];
+    const placeholders = payloadOrders
+      .map((item, idx) => {
+        const baseIndex = idx * 2;
+        values.push(item.task_id, item.sort_order);
+        return `($${baseIndex + 1}::uuid, $${baseIndex + 2}::int)`;
+      })
+      .join(", ");
+    values.push(childId, userId);
+
+    const updateResult = await client.query(
+      `UPDATE tasks
+       SET sort_order = updates.sort_order,
+           updated_at = now()
+       FROM (VALUES ${placeholders}) AS updates(id, sort_order)
+       WHERE tasks.id = updates.id
+         AND tasks.child_id = $${values.length - 1}
+         AND tasks.user_id = $${values.length}
+       RETURNING tasks.id`,
+      values,
+    );
+
+    await client.query("COMMIT");
+    return res.json({ updated: updateResult.rowCount });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("reorder tasks failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  } finally {
+    client.release();
   }
 });
 
