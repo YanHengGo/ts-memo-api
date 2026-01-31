@@ -7,8 +7,9 @@
 
     // Environment Settings
     // See also https://aka.ms/tsconfig/module
-    "target": "es2019",
-    "module": "commonjs",
+    "target": "ES2020",
+    "module": "CommonJS",
+    "resolveJsonModule": true,
     "moduleResolution": "Node",
     "types": ["node"],
     "esModuleInterop": true,
@@ -37,7 +38,7 @@
     // Recommended Options
     "strict": true,
     "jsx": "react-jsx",
-    "verbatimModuleSyntax": true,
+    "verbatimModuleSyntax": false,
     "isolatedModules": true,
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
