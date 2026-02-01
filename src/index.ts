@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import { pool } from "./db";
 
 const app = express();
+console.log("CORS_ORIGINS=", process.env.CORS_ORIGINS);
 const envOrigins = (process.env.CORS_ORIGINS ?? "")
   .split(",")
   .map((value) => value.trim())
@@ -12,7 +13,11 @@ const envOrigins = (process.env.CORS_ORIGINS ?? "")
 const allowedOrigins = new Set(
   envOrigins.length > 0
     ? envOrigins
-    : ["http://localhost:3000", "http://localhost:3001"],
+    : [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://learning-app-web-tan.vercel.app",
+      ],
 ); // default to local dev when env is empty
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
