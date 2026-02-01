@@ -22,14 +22,6 @@ const corsOptions: cors.CorsOptions = {
     if (allowedOrigins.has(origin)) {
       return callback(null, true);
     }
-    try {
-      const { hostname } = new URL(origin);
-      if (hostname.endsWith(".vercel.app")) {
-        return callback(null, true);
-      }
-    } catch {
-      // ignore invalid origin
-    }
     return callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
