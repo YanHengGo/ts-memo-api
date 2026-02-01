@@ -5,17 +5,28 @@ import jwt from "jsonwebtoken";
 import { pool } from "./db";
 
 const app = express();
-const allowedOrigins = new Set(["http://localhost:3001", "http://localhost:3000"]);
+const envOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
+const allowedOrigins = new Set(
+  envOrigins.length > 0
+    ? envOrigins
+    : ["http://localhost:3000", "http://localhost:3001"],
+); // default to local dev when env is empty
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) {
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.has(origin)) {
       return callback(null, true);
     }
     return callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false,
+  credentials: true,
 };
 
 app.use(cors(corsOptions));
