@@ -19,6 +19,10 @@ const allowedOrigins = new Set(
         "https://learning-app-web-tan.vercel.app",
       ],
 ); // default to local dev when env is empty
+const frontendUrl = process.env.FRONTEND_URL;
+if (frontendUrl && !allowedOrigins.has(frontendUrl)) {
+  allowedOrigins.add(frontendUrl);
+}
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     if (!origin) {
@@ -79,6 +83,35 @@ const authMiddleware: express.RequestHandler = (req, res, next) => {
   }
 };
 
+const fetchFn = (globalThis as { fetch?: (input: string, init?: any) => Promise<any> })
+  .fetch;
+const fetchJson = async (
+  url: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string },
+): Promise<any> => {
+  if (!fetchFn) {
+    throw new Error("fetch is not available");
+  }
+  const response = await fetchFn(url, options);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`oauth request failed: ${response.status} ${text}`);
+  }
+  return response.json();
+};
+
+const getRedirectBaseUrl = (): string | null => {
+  return process.env.OAUTH_REDIRECT_BASE_URL ?? null;
+};
+
+const buildFrontendRedirect = (token: string): string | null => {
+  if (!frontendUrl) {
+    return null;
+  }
+  const base = frontendUrl.replace(/\/$/, "");
+  return `${base}/login/callback?token=${encodeURIComponent(token)}`;
+};
+
 app.post("/api/v1/auth/signup", async (req, res) => {
   const { email, password } = req.body ?? {};
 
@@ -137,6 +170,10 @@ app.post("/api/v1/auth/login", async (req, res) => {
       return res.status(401).json({ error: "invalid credentials" });
     }
 
+    if (!user.password_hash) {
+      return res.status(401).json({ error: "invalid credentials" });
+    }
+
     const isValid = await bcrypt.compare(password, user.password_hash);
     if (!isValid) {
       return res.status(401).json({ error: "invalid credentials" });
@@ -151,6 +188,179 @@ app.post("/api/v1/auth/login", async (req, res) => {
     return res.json({ token });
   } catch (error) {
     console.error("login failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
+app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
+  const { provider } = req.params;
+  const redirectBaseUrl = getRedirectBaseUrl();
+
+  if (!redirectBaseUrl) {
+    return res.status(500).json({ error: "OAUTH_REDIRECT_BASE_URL is not set" });
+  }
+
+  if (provider !== "google" && provider !== "github") {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  const redirectUri = `${redirectBaseUrl}/api/v1/auth/oauth/${provider}/callback`;
+  if (provider === "google") {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      return res.status(500).json({ error: "GOOGLE_CLIENT_ID is not set" });
+    }
+    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    url.searchParams.set("client_id", clientId);
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("scope", "openid email profile");
+    return res.redirect(url.toString());
+  }
+
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: "GITHUB_CLIENT_ID is not set" });
+  }
+  const url = new URL("https://github.com/login/oauth/authorize");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("scope", "user:email");
+  return res.redirect(url.toString());
+});
+
+app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
+  const { provider } = req.params;
+  const { code } = req.query;
+
+  if (provider !== "google" && provider !== "github") {
+    return res.status(404).json({ error: "not_found" });
+  }
+  if (typeof code !== "string" || !code) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
+  const redirectBaseUrl = getRedirectBaseUrl();
+  if (!redirectBaseUrl) {
+    return res.status(500).json({ error: "OAUTH_REDIRECT_BASE_URL is not set" });
+  }
+  const redirectUri = `${redirectBaseUrl}/api/v1/auth/oauth/${provider}/callback`;
+
+  try {
+    let email: string | null = null;
+    if (provider === "google") {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      if (!clientId || !clientSecret) {
+        return res.status(500).json({ error: "Google OAuth env is not set" });
+      }
+      const tokenResponse = await fetchJson("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+          grant_type: "authorization_code",
+          redirect_uri: redirectUri,
+        }).toString(),
+      });
+      const accessToken = tokenResponse.access_token;
+      if (typeof accessToken !== "string") {
+        throw new Error("Google access_token is missing");
+      }
+      const userInfo = await fetchJson("https://openidconnect.googleapis.com/v1/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (typeof userInfo.email === "string") {
+        email = userInfo.email.trim();
+      }
+    } else {
+      const clientId = process.env.GITHUB_CLIENT_ID;
+      const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+      if (!clientId || !clientSecret) {
+        return res.status(500).json({ error: "GitHub OAuth env is not set" });
+      }
+      const tokenResponse = await fetchJson("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+          redirect_uri: redirectUri,
+        }).toString(),
+      });
+      const accessToken = tokenResponse.access_token;
+      if (typeof accessToken !== "string") {
+        throw new Error("GitHub access_token is missing");
+      }
+      const userInfo = await fetchJson("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          "User-Agent": "ts-memo-api",
+        },
+      });
+      if (typeof userInfo.email === "string" && userInfo.email) {
+        email = userInfo.email.trim();
+      }
+      if (!email) {
+        const emails = await fetchJson("https://api.github.com/user/emails", {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/json",
+            "User-Agent": "ts-memo-api",
+          },
+        });
+        if (Array.isArray(emails)) {
+          const primary = emails.find(
+            (entry) => entry && entry.primary === true && entry.verified === true,
+          );
+          const fallback = emails.find((entry) => entry && entry.verified === true);
+          const picked = primary ?? fallback;
+          if (picked && typeof picked.email === "string") {
+            email = picked.email.trim();
+          }
+        }
+      }
+    }
+
+    if (!email) {
+      throw new Error("OAuth email is missing");
+    }
+
+    const normalizedEmail = email.trim();
+    let userId: string;
+    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [
+      normalizedEmail,
+    ]);
+    if (existing.rows.length > 0) {
+      userId = existing.rows[0].id;
+    } else {
+      const created = await pool.query(
+        "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id",
+        [normalizedEmail, null],
+      );
+      userId = created.rows[0].id;
+    }
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      return res.status(500).json({ error: "JWT_SECRET is not set" });
+    }
+    const token = jwt.sign({ user_id: userId }, jwtSecret);
+
+    const redirectUrl = buildFrontendRedirect(token);
+    if (!redirectUrl) {
+      return res.status(500).json({ error: "FRONTEND_URL is not set" });
+    }
+    return res.redirect(redirectUrl);
+  } catch (error) {
+    console.error("oauth callback failed", error);
     return res.status(500).json({ error: "internal server error" });
   }
 });

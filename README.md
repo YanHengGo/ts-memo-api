@@ -207,3 +207,32 @@ curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/summary?from=202
 curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/summary?from=2026-01-01&to=2026-01-31" \\
   -H "Authorization: Bearer $TOKEN"
 ```
+
+---
+
+## OAuth（Google/GitHub）
+
+### 環境変数
+
+- `FRONTEND_URL` (例: `http://localhost:3001`)
+- `OAUTH_REDIRECT_BASE_URL` (例: `http://localhost:3000`)
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+
+### 動作確認
+
+1) 認証開始（ブラウザでアクセス）
+
+- `http://localhost:3000/api/v1/auth/oauth/google/start`
+- `http://localhost:3000/api/v1/auth/oauth/github/start`
+
+2) 認証後、`FRONTEND_URL/login/callback?token=...` にリダイレクトされること
+
+3) 受け取った token で API が使えること
+
+```bash
+curl -s -X GET http://localhost:3000/api/v1/children \\
+  -H "Authorization: Bearer $TOKEN"
+```
