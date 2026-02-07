@@ -112,6 +112,34 @@ const buildFrontendRedirect = (token: string): string | null => {
   return `${base}/login/callback?token=${encodeURIComponent(token)}`;
 };
 
+const createOauthState = (provider: string): string => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error("JWT_SECRET is not set");
+  }
+  return jwt.sign({ provider, purpose: "oauth_state" }, jwtSecret, {
+    expiresIn: "5m",
+  });
+};
+
+const verifyOauthState = (state: string, provider: string): boolean => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error("JWT_SECRET is not set");
+  }
+  try {
+    const payload = jwt.verify(state, jwtSecret);
+    return (
+      typeof payload === "object" &&
+      payload !== null &&
+      payload.purpose === "oauth_state" &&
+      payload.provider === provider
+    );
+  } catch {
+    return false;
+  }
+};
+
 app.post("/api/v1/auth/signup", async (req, res) => {
   const { email, password } = req.body ?? {};
 
@@ -205,6 +233,13 @@ app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
   }
 
   const redirectUri = `${redirectBaseUrl}/api/v1/auth/oauth/${provider}/callback`;
+  let state: string;
+  try {
+    state = createOauthState(provider);
+  } catch (error) {
+    console.error("oauth state creation failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
   if (provider === "google") {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -215,6 +250,7 @@ app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid email profile");
+    url.searchParams.set("state", state);
     return res.redirect(url.toString());
   }
 
@@ -226,18 +262,30 @@ app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("scope", "user:email");
+  url.searchParams.set("state", state);
   return res.redirect(url.toString());
 });
 
 app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
   const { provider } = req.params;
-  const { code } = req.query;
+  const { code, state } = req.query;
 
   if (provider !== "google" && provider !== "github") {
     return res.status(404).json({ error: "not_found" });
   }
   if (typeof code !== "string" || !code) {
     return res.status(400).json({ error: "invalid_request" });
+  }
+  if (typeof state !== "string" || !state) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+  try {
+    if (!verifyOauthState(state, provider)) {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+  } catch (error) {
+    console.error("oauth state verification failed", error);
+    return res.status(500).json({ error: "internal server error" });
   }
 
   const redirectBaseUrl = getRedirectBaseUrl();
