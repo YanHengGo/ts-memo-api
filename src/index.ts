@@ -1,6 +1,5 @@
 import bcrypt from "bcrypt";
 import cors from "cors";
-import crypto from "crypto";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { pool } from "./db";
@@ -113,25 +112,44 @@ const buildFrontendRedirect = (token: string): string | null => {
   return `${base}/login/callback?token=${encodeURIComponent(token)}`;
 };
 
-const createOauthState = (): string => {
-  return crypto.randomBytes(32).toString("hex");
+const createOauthState = (provider: string): string => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error("JWT_SECRET is not set");
+  }
+  return jwt.sign({ provider, typ: "oauth_state" }, jwtSecret, {
+    expiresIn: "10m",
+  });
 };
 
-const oauthStateCookieName = (provider: string): string =>
-  `oauth_state_${provider}`;
-
-const parseCookies = (cookieHeader?: string): Record<string, string> => {
-  if (!cookieHeader) {
-    return {};
+const verifyOauthState = (provider: string, state: string): string | null => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error("JWT_SECRET is not set");
   }
-  return cookieHeader.split(";").reduce<Record<string, string>>((acc, part) => {
-    const [rawKey, ...rest] = part.trim().split("=");
-    if (!rawKey) {
-      return acc;
+  try {
+    const payload = jwt.verify(state, jwtSecret);
+    if (typeof payload !== "object" || payload === null) {
+      return "payload_invalid";
     }
-    acc[rawKey] = decodeURIComponent(rest.join("="));
-    return acc;
-  }, {});
+    if (payload.typ !== "oauth_state") {
+      return "typ_mismatch";
+    }
+    if (payload.provider !== provider) {
+      return "provider_mismatch";
+    }
+    return null;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: string }).name === "TokenExpiredError"
+    ) {
+      return "expired";
+    }
+    return "signature_mismatch";
+  }
 };
 
 app.post("/api/v1/auth/signup", async (req, res) => {
@@ -227,15 +245,13 @@ app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
   }
 
   const redirectUri = `${redirectBaseUrl}/api/v1/auth/oauth/${provider}/callback`;
-  const state = createOauthState();
-  const secureCookie =
-    redirectBaseUrl.startsWith("https://") || req.secure || req.headers["x-forwarded-proto"] === "https";
-  res.cookie(oauthStateCookieName(provider), state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: secureCookie,
-    maxAge: 5 * 60 * 1000,
-  });
+  let state: string;
+  try {
+    state = createOauthState(provider);
+  } catch (error) {
+    console.error("oauth state creation failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
   if (provider === "google") {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -275,9 +291,15 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
   if (typeof state !== "string" || !state) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  const cookies = parseCookies(req.headers.cookie);
-  const expectedState = cookies[oauthStateCookieName(provider)];
-  if (!expectedState || expectedState !== state) {
+  let stateError: string | null;
+  try {
+    stateError = verifyOauthState(provider, state);
+  } catch (error) {
+    console.error("invalid_oauth_state: verification_failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+  if (stateError) {
+    console.error(`invalid_oauth_state: ${stateError}`);
     return res.status(400).json({ error: "invalid_request" });
   }
 
@@ -394,7 +416,6 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
     if (!redirectUrl) {
       return res.status(500).json({ error: "FRONTEND_URL is not set" });
     }
-    res.clearCookie(oauthStateCookieName(provider));
     return res.redirect(redirectUrl);
   } catch (error) {
     console.error("oauth callback failed", error);
