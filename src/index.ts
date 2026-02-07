@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import cors from "cors";
+import crypto from "crypto";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { pool } from "./db";
@@ -112,32 +113,25 @@ const buildFrontendRedirect = (token: string): string | null => {
   return `${base}/login/callback?token=${encodeURIComponent(token)}`;
 };
 
-const createOauthState = (provider: string): string => {
-  const jwtSecret = process.env.JWT_SECRET;
-  if (!jwtSecret) {
-    throw new Error("JWT_SECRET is not set");
-  }
-  return jwt.sign({ provider, purpose: "oauth_state" }, jwtSecret, {
-    expiresIn: "5m",
-  });
+const createOauthState = (): string => {
+  return crypto.randomBytes(32).toString("hex");
 };
 
-const verifyOauthState = (state: string, provider: string): boolean => {
-  const jwtSecret = process.env.JWT_SECRET;
-  if (!jwtSecret) {
-    throw new Error("JWT_SECRET is not set");
+const oauthStateCookieName = (provider: string): string =>
+  `oauth_state_${provider}`;
+
+const parseCookies = (cookieHeader?: string): Record<string, string> => {
+  if (!cookieHeader) {
+    return {};
   }
-  try {
-    const payload = jwt.verify(state, jwtSecret);
-    return (
-      typeof payload === "object" &&
-      payload !== null &&
-      payload.purpose === "oauth_state" &&
-      payload.provider === provider
-    );
-  } catch {
-    return false;
-  }
+  return cookieHeader.split(";").reduce<Record<string, string>>((acc, part) => {
+    const [rawKey, ...rest] = part.trim().split("=");
+    if (!rawKey) {
+      return acc;
+    }
+    acc[rawKey] = decodeURIComponent(rest.join("="));
+    return acc;
+  }, {});
 };
 
 app.post("/api/v1/auth/signup", async (req, res) => {
@@ -233,13 +227,15 @@ app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
   }
 
   const redirectUri = `${redirectBaseUrl}/api/v1/auth/oauth/${provider}/callback`;
-  let state: string;
-  try {
-    state = createOauthState(provider);
-  } catch (error) {
-    console.error("oauth state creation failed", error);
-    return res.status(500).json({ error: "internal server error" });
-  }
+  const state = createOauthState();
+  const secureCookie =
+    redirectBaseUrl.startsWith("https://") || req.secure || req.headers["x-forwarded-proto"] === "https";
+  res.cookie(oauthStateCookieName(provider), state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: secureCookie,
+    maxAge: 5 * 60 * 1000,
+  });
   if (provider === "google") {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -279,13 +275,10 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
   if (typeof state !== "string" || !state) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  try {
-    if (!verifyOauthState(state, provider)) {
-      return res.status(400).json({ error: "invalid_request" });
-    }
-  } catch (error) {
-    console.error("oauth state verification failed", error);
-    return res.status(500).json({ error: "internal server error" });
+  const cookies = parseCookies(req.headers.cookie);
+  const expectedState = cookies[oauthStateCookieName(provider)];
+  if (!expectedState || expectedState !== state) {
+    return res.status(400).json({ error: "invalid_request" });
   }
 
   const redirectBaseUrl = getRedirectBaseUrl();
@@ -382,19 +375,14 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
     }
 
     const normalizedEmail = email.trim();
-    let userId: string;
-    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [
-      normalizedEmail,
-    ]);
-    if (existing.rows.length > 0) {
-      userId = existing.rows[0].id;
-    } else {
-      const created = await pool.query(
-        "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id",
-        [normalizedEmail, null],
-      );
-      userId = created.rows[0].id;
-    }
+    const upserted = await pool.query(
+      `INSERT INTO users (email, password_hash)
+       VALUES ($1, $2)
+       ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+       RETURNING id`,
+      [normalizedEmail, null],
+    );
+    const userId = upserted.rows[0].id;
 
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
@@ -406,6 +394,7 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
     if (!redirectUrl) {
       return res.status(500).json({ error: "FRONTEND_URL is not set" });
     }
+    res.clearCookie(oauthStateCookieName(provider));
     return res.redirect(redirectUrl);
   } catch (error) {
     console.error("oauth callback failed", error);
