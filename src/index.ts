@@ -1244,34 +1244,13 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
     }
   }
 
-  if (startDate === undefined || endDate === undefined) {
-    try {
-      const existing = await pool.query(
-        "SELECT start_date, end_date FROM tasks WHERE id = $1 AND child_id = $2 AND user_id = $3",
-        [taskId, childId, userId],
-      );
-      if (existing.rowCount === 0) {
-        return res.status(404).json({ error: "not_found" });
-      }
-      const currentStart = existing.rows[0].start_date
-        ? String(existing.rows[0].start_date).slice(0, 10)
-        : null;
-      const currentEnd = existing.rows[0].end_date
-        ? String(existing.rows[0].end_date).slice(0, 10)
-        : null;
-      if (startDate === undefined) {
-        startDate = currentStart;
-      }
-      if (endDate === undefined) {
-        endDate = currentEnd;
-      }
-    } catch (error) {
-      console.error("put task date validation failed", error);
-      return res.status(500).json({ error: "internal server error" });
-    }
-  }
-
-  if (startDate !== null && endDate !== null && startDate > endDate) {
+  if (
+    startDate !== undefined &&
+    endDate !== undefined &&
+    startDate !== null &&
+    endDate !== null &&
+    startDate > endDate
+  ) {
     return res.status(400).json({ error: "invalid_request" });
   }
 
@@ -1304,8 +1283,8 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
         subject.trim(),
         minutes,
         days_mask,
-        startDate,
-        endDate,
+        startDate ?? null,
+        endDate ?? null,
       ],
     );
     return res.status(201).json(result.rows[0]);
@@ -1466,7 +1445,34 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
     }
   }
 
-  if (startDate && endDate && startDate > endDate) {
+  if (startDate === undefined || endDate === undefined) {
+    try {
+      const existing = await pool.query(
+        "SELECT start_date, end_date FROM tasks WHERE id = $1 AND child_id = $2 AND user_id = $3",
+        [taskId, childId, userId],
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "not_found" });
+      }
+      const currentStart = existing.rows[0].start_date
+        ? String(existing.rows[0].start_date).slice(0, 10)
+        : null;
+      const currentEnd = existing.rows[0].end_date
+        ? String(existing.rows[0].end_date).slice(0, 10)
+        : null;
+      if (startDate === undefined) {
+        startDate = currentStart;
+      }
+      if (endDate === undefined) {
+        endDate = currentEnd;
+      }
+    } catch (error) {
+      console.error("put task date validation failed", error);
+      return res.status(500).json({ error: "internal server error" });
+    }
+  }
+
+  if (startDate !== null && endDate !== null && startDate > endDate) {
     return res.status(400).json({ error: "invalid_request" });
   }
 
