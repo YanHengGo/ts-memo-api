@@ -83,6 +83,25 @@ const authMiddleware: express.RequestHandler = (req, res, next) => {
   }
 };
 
+app.get("/api/v1/me", authMiddleware, async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+
+  try {
+    const result = await pool.query(
+      "SELECT id, email, display_name, avatar_url, provider FROM users WHERE id = $1",
+      [userId],
+    );
+    const user = result.rows[0];
+    if (!user) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    return res.json({ user });
+  } catch (error) {
+    console.error("me failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  }
+});
+
 const fetchFn = (globalThis as { fetch?: (input: string, init?: any) => Promise<any> })
   .fetch;
 const fetchJson = async (
@@ -168,8 +187,8 @@ app.post("/api/v1/auth/signup", async (req, res) => {
   try {
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at, updated_at",
-      [normalizedEmail, passwordHash],
+      "INSERT INTO users (email, password_hash, provider) VALUES ($1, $2, $3) RETURNING id, email, created_at, updated_at",
+      [normalizedEmail, passwordHash, "password"],
     );
 
     return res.status(201).json({ user: result.rows[0] });
@@ -218,6 +237,8 @@ app.post("/api/v1/auth/login", async (req, res) => {
     if (!isValid) {
       return res.status(401).json({ error: "invalid credentials" });
     }
+
+    await pool.query("UPDATE users SET provider = $1 WHERE id = $2", ["password", user.id]);
 
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
@@ -311,6 +332,9 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
 
   try {
     let email: string | null = null;
+    let displayName: string | null = null;
+    let avatarUrl: string | null = null;
+    let providerUserId: string | null = null;
     if (provider === "google") {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -337,6 +361,17 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
       });
       if (typeof userInfo.email === "string") {
         email = userInfo.email.trim();
+      }
+      if (typeof userInfo.name === "string" && userInfo.name.trim()) {
+        displayName = userInfo.name.trim();
+      } else if (typeof userInfo.given_name === "string" && userInfo.given_name.trim()) {
+        displayName = userInfo.given_name.trim();
+      }
+      if (typeof userInfo.picture === "string" && userInfo.picture.trim()) {
+        avatarUrl = userInfo.picture.trim();
+      }
+      if (typeof userInfo.sub === "string" && userInfo.sub.trim()) {
+        providerUserId = userInfo.sub.trim();
       }
     } else {
       const clientId = process.env.GITHUB_CLIENT_ID;
@@ -371,6 +406,17 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
       if (typeof userInfo.email === "string" && userInfo.email) {
         email = userInfo.email.trim();
       }
+      if (typeof userInfo.name === "string" && userInfo.name.trim()) {
+        displayName = userInfo.name.trim();
+      } else if (typeof userInfo.login === "string" && userInfo.login.trim()) {
+        displayName = userInfo.login.trim();
+      }
+      if (typeof userInfo.avatar_url === "string" && userInfo.avatar_url.trim()) {
+        avatarUrl = userInfo.avatar_url.trim();
+      }
+      if (userInfo.id !== undefined && userInfo.id !== null) {
+        providerUserId = String(userInfo.id);
+      }
       if (!email) {
         const emails = await fetchJson("https://api.github.com/user/emails", {
           headers: {
@@ -398,11 +444,16 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
 
     const normalizedEmail = email.trim();
     const upserted = await pool.query(
-      `INSERT INTO users (email, password_hash)
-       VALUES ($1, $2)
-       ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+      `INSERT INTO users (email, password_hash, display_name, avatar_url, provider, provider_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (email) DO UPDATE SET
+         email = EXCLUDED.email,
+         display_name = EXCLUDED.display_name,
+         avatar_url = EXCLUDED.avatar_url,
+         provider = EXCLUDED.provider,
+         provider_user_id = EXCLUDED.provider_user_id
        RETURNING id`,
-      [normalizedEmail, null],
+      [normalizedEmail, null, displayName, avatarUrl, provider, providerUserId],
     );
     const userId = upserted.rows[0].id;
 
