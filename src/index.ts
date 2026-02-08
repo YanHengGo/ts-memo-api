@@ -868,7 +868,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
     }
 
     const tasksResult = await pool.query(
-      `SELECT id, days_mask
+      `SELECT id, days_mask, start_date, end_date
        FROM tasks
        WHERE child_id = $1 AND user_id = $2 AND is_archived = false`,
       [childId, userId],
@@ -898,9 +898,18 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
       const dateKey = current.toISOString().slice(0, 10);
       const todayMask = weekdayMaskSunStart(dateKey);
 
-      const targetTasks = tasksResult.rows.filter(
-        (task) => (task.days_mask & todayMask) !== 0,
-      );
+      const targetTasks = tasksResult.rows.filter((task) => {
+        if ((task.days_mask & todayMask) === 0) {
+          return false;
+        }
+        if (task.start_date && String(task.start_date).slice(0, 10) > dateKey) {
+          return false;
+        }
+        if (task.end_date && String(task.end_date).slice(0, 10) < dateKey) {
+          return false;
+        }
+        return true;
+      });
       const total = targetTasks.length;
 
       let done = 0;
@@ -1212,8 +1221,8 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
     return res.status(400).json({ error: "invalid_request" });
   }
 
-  let startDate: string | null = null;
-  let endDate: string | null = null;
+  let startDate: string | null | undefined = undefined;
+  let endDate: string | null | undefined = undefined;
 
   if (start_date !== undefined) {
     if (start_date === null) {
@@ -1235,7 +1244,34 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
     }
   }
 
-  if (startDate && endDate && startDate > endDate) {
+  if (startDate === undefined || endDate === undefined) {
+    try {
+      const existing = await pool.query(
+        "SELECT start_date, end_date FROM tasks WHERE id = $1 AND child_id = $2 AND user_id = $3",
+        [taskId, childId, userId],
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "not_found" });
+      }
+      const currentStart = existing.rows[0].start_date
+        ? String(existing.rows[0].start_date).slice(0, 10)
+        : null;
+      const currentEnd = existing.rows[0].end_date
+        ? String(existing.rows[0].end_date).slice(0, 10)
+        : null;
+      if (startDate === undefined) {
+        startDate = currentStart;
+      }
+      if (endDate === undefined) {
+        endDate = currentEnd;
+      }
+    } catch (error) {
+      console.error("put task date validation failed", error);
+      return res.status(500).json({ error: "internal server error" });
+    }
+  }
+
+  if (startDate !== null && endDate !== null && startDate > endDate) {
     return res.status(400).json({ error: "invalid_request" });
   }
 
