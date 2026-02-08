@@ -732,7 +732,15 @@ app.get("/api/v1/children/:childId/tasks", async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT id, name, description, subject, default_minutes, days_mask, is_archived
+      `SELECT id,
+              name,
+              description,
+              subject,
+              default_minutes,
+              days_mask,
+              is_archived,
+              TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+              TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date
        FROM tasks
        WHERE child_id = $1 AND user_id = $2 AND is_archived = $3
        ORDER BY sort_order ASC`,
@@ -775,8 +783,10 @@ app.get("/api/v1/children/:childId/daily-view", async (req, res) => {
          AND user_id = $2
          AND is_archived = false
          AND (days_mask & $3) != 0
+         AND (start_date IS NULL OR start_date <= $4::date)
+         AND (end_date IS NULL OR end_date >= $4::date)
        ORDER BY sort_order ASC`,
-      [childId, userId, todayMask],
+      [childId, userId, todayMask, dateParam],
     );
 
     const logsResult = await pool.query(
@@ -858,7 +868,7 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
     }
 
     const tasksResult = await pool.query(
-      `SELECT id, days_mask
+      `SELECT id, days_mask, start_date, end_date
        FROM tasks
        WHERE child_id = $1 AND user_id = $2 AND is_archived = false`,
       [childId, userId],
@@ -888,9 +898,18 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
       const dateKey = current.toISOString().slice(0, 10);
       const todayMask = weekdayMaskSunStart(dateKey);
 
-      const targetTasks = tasksResult.rows.filter(
-        (task) => (task.days_mask & todayMask) !== 0,
-      );
+      const targetTasks = tasksResult.rows.filter((task) => {
+        if ((task.days_mask & todayMask) === 0) {
+          return false;
+        }
+        if (task.start_date && String(task.start_date).slice(0, 10) > dateKey) {
+          return false;
+        }
+        if (task.end_date && String(task.end_date).slice(0, 10) < dateKey) {
+          return false;
+        }
+        return true;
+      });
       const total = targetTasks.length;
 
       let done = 0;
@@ -1165,7 +1184,15 @@ app.put("/api/v1/children/:childId/daily", async (req, res) => {
 app.post("/api/v1/children/:childId/tasks", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { childId } = req.params;
-  const { name, description, subject, default_minutes, days_mask } = req.body ?? {};
+  const {
+    name,
+    description,
+    subject,
+    default_minutes,
+    days_mask,
+    start_date,
+    end_date,
+  } = req.body ?? {};
 
   if (!isUuid(childId)) {
     return res.status(400).json({ error: "invalid_request" });
@@ -1194,6 +1221,39 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
     return res.status(400).json({ error: "invalid_request" });
   }
 
+  let startDate: string | null | undefined = undefined;
+  let endDate: string | null | undefined = undefined;
+
+  if (start_date !== undefined) {
+    if (start_date === null) {
+      startDate = null;
+    } else if (typeof start_date === "string" && isValidDate(start_date)) {
+      startDate = start_date;
+    } else {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+  }
+
+  if (end_date !== undefined) {
+    if (end_date === null) {
+      endDate = null;
+    } else if (typeof end_date === "string" && isValidDate(end_date)) {
+      endDate = end_date;
+    } else {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+  }
+
+  if (
+    startDate !== undefined &&
+    endDate !== undefined &&
+    startDate !== null &&
+    endDate !== null &&
+    startDate > endDate
+  ) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
   try {
     const childResult = await pool.query(
       "SELECT 1 FROM children WHERE id = $1 AND user_id = $2",
@@ -1204,9 +1264,17 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO tasks (user_id, child_id, name, description, subject, default_minutes, days_mask)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, name, description, subject, default_minutes, days_mask, is_archived`,
+      `INSERT INTO tasks (user_id, child_id, name, description, subject, default_minutes, days_mask, start_date, end_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id,
+                 name,
+                 description,
+                 subject,
+                 default_minutes,
+                 days_mask,
+                 is_archived,
+                 TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+                 TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date`,
       [
         userId,
         childId,
@@ -1215,6 +1283,8 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
         subject.trim(),
         minutes,
         days_mask,
+        startDate ?? null,
+        endDate ?? null,
       ],
     );
     return res.status(201).json(result.rows[0]);
@@ -1313,8 +1383,16 @@ app.put("/api/v1/children/:childId/tasks/reorder", async (req, res) => {
 app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { childId, taskId } = req.params;
-  const { name, description, subject, default_minutes, days_mask, is_archived } =
-    req.body ?? {};
+  const {
+    name,
+    description,
+    subject,
+    default_minutes,
+    days_mask,
+    is_archived,
+    start_date,
+    end_date,
+  } = req.body ?? {};
 
   if (!isUuid(childId) || !isUuid(taskId)) {
     return res.status(400).json({ error: "invalid_request" });
@@ -1344,6 +1422,60 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
     return res.status(400).json({ error: "invalid_request" });
   }
 
+  let startDate: string | null = null;
+  let endDate: string | null = null;
+
+  if (start_date !== undefined) {
+    if (start_date === null) {
+      startDate = null;
+    } else if (typeof start_date === "string" && isValidDate(start_date)) {
+      startDate = start_date;
+    } else {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+  }
+
+  if (end_date !== undefined) {
+    if (end_date === null) {
+      endDate = null;
+    } else if (typeof end_date === "string" && isValidDate(end_date)) {
+      endDate = end_date;
+    } else {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+  }
+
+  if (startDate === undefined || endDate === undefined) {
+    try {
+      const existing = await pool.query(
+        "SELECT start_date, end_date FROM tasks WHERE id = $1 AND child_id = $2 AND user_id = $3",
+        [taskId, childId, userId],
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "not_found" });
+      }
+      const currentStart = existing.rows[0].start_date
+        ? String(existing.rows[0].start_date).slice(0, 10)
+        : null;
+      const currentEnd = existing.rows[0].end_date
+        ? String(existing.rows[0].end_date).slice(0, 10)
+        : null;
+      if (startDate === undefined) {
+        startDate = currentStart;
+      }
+      if (endDate === undefined) {
+        endDate = currentEnd;
+      }
+    } catch (error) {
+      console.error("put task date validation failed", error);
+      return res.status(500).json({ error: "internal server error" });
+    }
+  }
+
+  if (startDate !== null && endDate !== null && startDate > endDate) {
+    return res.status(400).json({ error: "invalid_request" });
+  }
+
   try {
     const result = await pool.query(
       `UPDATE tasks
@@ -1353,9 +1485,19 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
            default_minutes = $4,
            days_mask = $5,
            is_archived = $6,
+           start_date = $7,
+           end_date = $8,
            updated_at = now()
-       WHERE id = $7 AND child_id = $8 AND user_id = $9
-       RETURNING id, name, description, subject, default_minutes, days_mask, is_archived`,
+       WHERE id = $9 AND child_id = $10 AND user_id = $11
+       RETURNING id,
+                 name,
+                 description,
+                 subject,
+                 default_minutes,
+                 days_mask,
+                 is_archived,
+                 TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+                 TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date`,
       [
         name.trim(),
         description ?? null,
@@ -1363,6 +1505,8 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
         default_minutes,
         days_mask,
         is_archived,
+        startDate,
+        endDate,
         taskId,
         childId,
         userId,
@@ -1383,8 +1527,16 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
 app.patch("/api/v1/tasks/:taskId", async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const { taskId } = req.params;
-  const { name, description, subject, default_minutes, days_mask, is_archived } =
-    req.body ?? {};
+  const {
+    name,
+    description,
+    subject,
+    default_minutes,
+    days_mask,
+    is_archived,
+    start_date,
+    end_date,
+  } = req.body ?? {};
 
   if (!isUuid(taskId)) {
     return res.status(400).json({ error: "invalid_request" });
@@ -1448,6 +1600,60 @@ app.patch("/api/v1/tasks/:taskId", async (req, res) => {
     values.push(is_archived);
   }
 
+  let startDate: string | null | undefined;
+  let endDate: string | null | undefined;
+
+  if (start_date !== undefined) {
+    if (start_date === null) {
+      startDate = null;
+    } else if (typeof start_date === "string" && isValidDate(start_date)) {
+      startDate = start_date;
+    } else {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    fields.push(`start_date = $${index++}`);
+    values.push(startDate);
+  }
+
+  if (end_date !== undefined) {
+    if (end_date === null) {
+      endDate = null;
+    } else if (typeof end_date === "string" && isValidDate(end_date)) {
+      endDate = end_date;
+    } else {
+      return res.status(400).json({ error: "invalid_request" });
+    }
+    fields.push(`end_date = $${index++}`);
+    values.push(endDate);
+  }
+
+  if (startDate !== undefined || endDate !== undefined) {
+    try {
+      const existing = await pool.query(
+        "SELECT start_date, end_date FROM tasks WHERE id = $1 AND user_id = $2",
+        [taskId, userId],
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "not_found" });
+      }
+      const currentStart = existing.rows[0].start_date
+        ? String(existing.rows[0].start_date).slice(0, 10)
+        : null;
+      const currentEnd = existing.rows[0].end_date
+        ? String(existing.rows[0].end_date).slice(0, 10)
+        : null;
+      const nextStart = startDate !== undefined ? startDate : currentStart;
+      const nextEnd = endDate !== undefined ? endDate : currentEnd;
+
+      if (nextStart !== null && nextEnd !== null && nextStart > nextEnd) {
+        return res.status(400).json({ error: "invalid_request" });
+      }
+    } catch (error) {
+      console.error("patch task date validation failed", error);
+      return res.status(500).json({ error: "internal server error" });
+    }
+  }
+
   if (fields.length === 0) {
     return res.status(400).json({ error: "invalid_request" });
   }
@@ -1459,7 +1665,15 @@ app.patch("/api/v1/tasks/:taskId", async (req, res) => {
     const result = await pool.query(
       `UPDATE tasks SET ${fields.join(", ")}
        WHERE id = $${index++} AND user_id = $${index}
-       RETURNING id, name, description, subject, default_minutes, days_mask, is_archived`,
+       RETURNING id,
+                 name,
+                 description,
+                 subject,
+                 default_minutes,
+                 days_mask,
+                 is_archived,
+                 TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+                 TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date`,
       values,
     );
 
