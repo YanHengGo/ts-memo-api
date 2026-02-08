@@ -1585,14 +1585,31 @@ app.patch("/api/v1/tasks/:taskId", async (req, res) => {
     values.push(endDate);
   }
 
-  if (
-    startDate !== undefined &&
-    endDate !== undefined &&
-    startDate !== null &&
-    endDate !== null &&
-    startDate > endDate
-  ) {
-    return res.status(400).json({ error: "invalid_request" });
+  if (startDate !== undefined || endDate !== undefined) {
+    try {
+      const existing = await pool.query(
+        "SELECT start_date, end_date FROM tasks WHERE id = $1 AND user_id = $2",
+        [taskId, userId],
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "not_found" });
+      }
+      const currentStart = existing.rows[0].start_date
+        ? String(existing.rows[0].start_date).slice(0, 10)
+        : null;
+      const currentEnd = existing.rows[0].end_date
+        ? String(existing.rows[0].end_date).slice(0, 10)
+        : null;
+      const nextStart = startDate !== undefined ? startDate : currentStart;
+      const nextEnd = endDate !== undefined ? endDate : currentEnd;
+
+      if (nextStart !== null && nextEnd !== null && nextStart > nextEnd) {
+        return res.status(400).json({ error: "invalid_request" });
+      }
+    } catch (error) {
+      console.error("patch task date validation failed", error);
+      return res.status(500).json({ error: "internal server error" });
+    }
   }
 
   if (fields.length === 0) {
