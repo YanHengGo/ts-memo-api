@@ -99,6 +99,9 @@ psql "$DATABASE_URL" -f migrations/001_create_users.sql
 psql "$DATABASE_URL" -f migrations/002_create_children.sql
 psql "$DATABASE_URL" -f migrations/003_create_tasks.sql
 psql "$DATABASE_URL" -f migrations/004_create_study_logs.sql
+psql "$DATABASE_URL" -f migrations/005_add_task_sort_order.sql
+psql "$DATABASE_URL" -f migrations/006_make_password_hash_nullable.sql
+psql "$DATABASE_URL" -f migrations/007_add_user_profile.sql
 ```
 
 ### curl例（login → token → children）
@@ -235,4 +238,29 @@ curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/summary?from=202
 ```bash
 curl -s -X GET http://localhost:3000/api/v1/children \\
   -H "Authorization: Bearer $TOKEN"
+```
+
+4) OAuth ログイン時は users に display_name / avatar_url / provider が保存される
+
+### /me
+
+ログイン済みユーザーのプロフィールを取得します。
+
+```bash
+curl -s -X GET http://localhost:3000/api/v1/me \\
+  -H "Authorization: Bearer $TOKEN"
+```
+
+レスポンス例:
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "email": "demo@example.com",
+    "display_name": "Taro Yamada",
+    "avatar_url": "https://...",
+    "provider": "google"
+  }
+}
 ```
