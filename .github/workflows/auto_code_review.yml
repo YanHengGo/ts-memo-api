@@ -25,23 +25,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # --- ESLint: PRに指摘コメントを付ける ---
-      - name: ESLint (reviewdog)
-        uses: reviewdog/action-eslint@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          eslint_flags: "."
-          fail_on_error: "false"
+      # --- Prettier: フォーマット崩れをチェック ---
+      - name: Prettier check
+        run: npx prettier --check .
 
-      # --- Prettier: フォーマット崩れをPRに出す（任意）---
-      - name: Prettier check (reviewdog)
-        uses: reviewdog/action-prettier@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          fail_on_error: "false"
-
-      # --- TypeScript型チェック（任意：プロジェクトに合わせて）---
+      # --- TypeScript型チェック ---
       - name: TypeScript typecheck
-        run: npm run typecheck --if-present
+        run: npx tsc --noEmit
