@@ -34,13 +34,9 @@ jobs:
           eslint_flags: "."
           fail_on_error: "false"
 
-      # --- Prettier: フォーマット崩れをPRに出す（任意）---
-      - name: Prettier check (reviewdog)
-        uses: reviewdog/action-prettier@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          fail_on_error: "false"
+      # --- Prettier: フォーマット崩れをチェック ---
+      - name: Prettier check
+        run: npx prettier --check .
 
       # --- TypeScript型チェック（任意：プロジェクトに合わせて）---
       - name: TypeScript typecheck
