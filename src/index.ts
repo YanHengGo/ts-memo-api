@@ -1750,6 +1750,10 @@ app.patch("/api/v1/tasks/:taskId", async (req, res) => {
   }
 });
 
+app.get("/api/v1/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 const port = Number(process.env.PORT) || 3000;
 app.listen(port, () => {
   console.log(`API server running: http://localhost:${port}`);
