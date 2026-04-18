@@ -44,17 +44,21 @@
 ## 🛠 技術スタック（Tech Stack）
 
 ### フロントエンド
+
 - Next.js
 - TypeScript
 
 ### バックエンド
+
 - Go
 - REST API
 
 ### データベース
+
 - PostgreSQL（予定）
 
 ### その他
+
 - Docker（予定）
 - GitHub Actions（CI予定）
 
@@ -226,21 +230,21 @@ curl -s -X GET "http://localhost:3000/api/v1/children/$CHILD_ID/summary?from=202
 
 ### 動作確認
 
-1) 認証開始（ブラウザでアクセス）
+1. 認証開始（ブラウザでアクセス）
 
 - `http://localhost:3000/api/v1/auth/oauth/google/start`
 - `http://localhost:3000/api/v1/auth/oauth/github/start`
 
-2) 認証後、`FRONTEND_URL/login/callback?token=...` にリダイレクトされること
+2. 認証後、`FRONTEND_URL/login/callback?token=...` にリダイレクトされること
 
-3) 受け取った token で API が使えること
+3. 受け取った token で API が使えること
 
 ```bash
 curl -s -X GET http://localhost:3000/api/v1/children \\
   -H "Authorization: Bearer $TOKEN"
 ```
 
-4) OAuth ログイン時は users に display_name / avatar_url / provider が保存される
+4. OAuth ログイン時は users に display_name / avatar_url / provider が保存される
 
 ### /me
 

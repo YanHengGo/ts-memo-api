@@ -48,9 +48,7 @@ app.get("/health", (_req, res) => {
 type AuthenticatedRequest = express.Request & { userId: string };
 
 const isUuid = (value: string): boolean =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    value,
-  );
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 const authMiddleware: express.RequestHandler = (req, res, next) => {
   const authHeader = req.header("authorization");
@@ -122,8 +120,9 @@ app.delete("/api/v1/me", authMiddleware, async (req, res) => {
   }
 });
 
-const fetchFn = (globalThis as { fetch?: (input: string, init?: any) => Promise<any> })
-  .fetch;
+const fetchFn = (
+  globalThis as { fetch?: (input: string, init?: any) => Promise<any> }
+).fetch;
 const fetchJson = async (
   url: string,
   options: { method?: string; headers?: Record<string, string>; body?: string },
@@ -258,7 +257,10 @@ app.post("/api/v1/auth/login", async (req, res) => {
       return res.status(401).json({ error: "invalid credentials" });
     }
 
-    await pool.query("UPDATE users SET provider = $1 WHERE id = $2", ["password", user.id]);
+    await pool.query("UPDATE users SET provider = $1 WHERE id = $2", [
+      "password",
+      user.id,
+    ]);
 
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
@@ -278,7 +280,9 @@ app.get("/api/v1/auth/oauth/:provider/start", (req, res) => {
   const redirectBaseUrl = getRedirectBaseUrl();
 
   if (!redirectBaseUrl) {
-    return res.status(500).json({ error: "OAUTH_REDIRECT_BASE_URL is not set" });
+    return res
+      .status(500)
+      .json({ error: "OAUTH_REDIRECT_BASE_URL is not set" });
   }
 
   if (provider !== "google" && provider !== "github") {
@@ -346,7 +350,9 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
 
   const redirectBaseUrl = getRedirectBaseUrl();
   if (!redirectBaseUrl) {
-    return res.status(500).json({ error: "OAUTH_REDIRECT_BASE_URL is not set" });
+    return res
+      .status(500)
+      .json({ error: "OAUTH_REDIRECT_BASE_URL is not set" });
   }
   const redirectUri = `${redirectBaseUrl}/api/v1/auth/oauth/${provider}/callback`;
 
@@ -361,30 +367,39 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
       if (!clientId || !clientSecret) {
         return res.status(500).json({ error: "Google OAuth env is not set" });
       }
-      const tokenResponse = await fetchJson("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code,
-          grant_type: "authorization_code",
-          redirect_uri: redirectUri,
-        }).toString(),
-      });
+      const tokenResponse = await fetchJson(
+        "https://oauth2.googleapis.com/token",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code,
+            grant_type: "authorization_code",
+            redirect_uri: redirectUri,
+          }).toString(),
+        },
+      );
       const accessToken = tokenResponse.access_token;
       if (typeof accessToken !== "string") {
         throw new Error("Google access_token is missing");
       }
-      const userInfo = await fetchJson("https://openidconnect.googleapis.com/v1/userinfo", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const userInfo = await fetchJson(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
       if (typeof userInfo.email === "string") {
         email = userInfo.email.trim();
       }
       if (typeof userInfo.name === "string" && userInfo.name.trim()) {
         displayName = userInfo.name.trim();
-      } else if (typeof userInfo.given_name === "string" && userInfo.given_name.trim()) {
+      } else if (
+        typeof userInfo.given_name === "string" &&
+        userInfo.given_name.trim()
+      ) {
         displayName = userInfo.given_name.trim();
       }
       if (typeof userInfo.picture === "string" && userInfo.picture.trim()) {
@@ -399,19 +414,22 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
       if (!clientId || !clientSecret) {
         return res.status(500).json({ error: "GitHub OAuth env is not set" });
       }
-      const tokenResponse = await fetchJson("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded",
+      const tokenResponse = await fetchJson(
+        "https://github.com/login/oauth/access_token",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code,
+            redirect_uri: redirectUri,
+          }).toString(),
         },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          code,
-          redirect_uri: redirectUri,
-        }).toString(),
-      });
+      );
       const accessToken = tokenResponse.access_token;
       if (typeof accessToken !== "string") {
         throw new Error("GitHub access_token is missing");
@@ -431,7 +449,10 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
       } else if (typeof userInfo.login === "string" && userInfo.login.trim()) {
         displayName = userInfo.login.trim();
       }
-      if (typeof userInfo.avatar_url === "string" && userInfo.avatar_url.trim()) {
+      if (
+        typeof userInfo.avatar_url === "string" &&
+        userInfo.avatar_url.trim()
+      ) {
         avatarUrl = userInfo.avatar_url.trim();
       }
       if (userInfo.id !== undefined && userInfo.id !== null) {
@@ -447,9 +468,12 @@ app.get("/api/v1/auth/oauth/:provider/callback", async (req, res) => {
         });
         if (Array.isArray(emails)) {
           const primary = emails.find(
-            (entry) => entry && entry.primary === true && entry.verified === true,
+            (entry) =>
+              entry && entry.primary === true && entry.verified === true,
           );
-          const fallback = emails.find((entry) => entry && entry.verified === true);
+          const fallback = emails.find(
+            (entry) => entry && entry.verified === true,
+          );
           const picked = primary ?? fallback;
           if (picked && typeof picked.email === "string") {
             email = picked.email.trim();
@@ -664,11 +688,7 @@ app.put("/api/v1/children/:id", async (req, res) => {
   if (typeof name !== "string" || !name.trim()) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  if (
-    grade !== undefined &&
-    grade !== null &&
-    typeof grade !== "string"
-  ) {
+  if (grade !== undefined && grade !== null && typeof grade !== "string") {
     return res.status(400).json({ error: "invalid_request" });
   }
 
@@ -910,7 +930,12 @@ app.get("/api/v1/children/:childId/calendar-summary", async (req, res) => {
     }
 
     const todayUtc = formatUtcDate(new Date());
-    const days: Array<{ date: string; status: string; total: number; done: number }> = [];
+    const days: Array<{
+      date: string;
+      status: string;
+      total: number;
+      done: number;
+    }> = [];
 
     for (let i = 0; i < dayCount; i += 1) {
       const current = new Date(fromDate);
@@ -1224,7 +1249,11 @@ app.post("/api/v1/children/:childId/tasks", async (req, res) => {
   if (typeof subject !== "string" || !subject.trim()) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  if (description !== undefined && description !== null && typeof description !== "string") {
+  if (
+    description !== undefined &&
+    description !== null &&
+    typeof description !== "string"
+  ) {
     return res.status(400).json({ error: "invalid_request" });
   }
   if (default_minutes !== undefined && typeof default_minutes !== "number") {
@@ -1338,7 +1367,10 @@ app.put("/api/v1/children/:childId/tasks/reorder", async (req, res) => {
     if (taskIdSet.has(item.task_id)) {
       return res.status(400).json({ error: "invalid_request" });
     }
-    if (typeof item.sort_order !== "number" || !Number.isInteger(item.sort_order)) {
+    if (
+      typeof item.sort_order !== "number" ||
+      !Number.isInteger(item.sort_order)
+    ) {
       return res.status(400).json({ error: "invalid_request" });
     }
     taskIdSet.add(item.task_id);
@@ -1423,10 +1455,17 @@ app.put("/api/v1/children/:childId/tasks/:taskId", async (req, res) => {
   if (typeof subject !== "string" || !subject.trim()) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  if (description !== undefined && description !== null && typeof description !== "string") {
+  if (
+    description !== undefined &&
+    description !== null &&
+    typeof description !== "string"
+  ) {
     return res.status(400).json({ error: "invalid_request" });
   }
-  if (typeof default_minutes !== "number" || !Number.isInteger(default_minutes)) {
+  if (
+    typeof default_minutes !== "number" ||
+    !Number.isInteger(default_minutes)
+  ) {
     return res.status(400).json({ error: "invalid_request" });
   }
   if (default_minutes < 1) {
@@ -1591,7 +1630,10 @@ app.patch("/api/v1/tasks/:taskId", async (req, res) => {
   }
 
   if (default_minutes !== undefined) {
-    if (typeof default_minutes !== "number" || !Number.isInteger(default_minutes)) {
+    if (
+      typeof default_minutes !== "number" ||
+      !Number.isInteger(default_minutes)
+    ) {
       return res.status(400).json({ error: "invalid_request" });
     }
     if (default_minutes < 1) {
