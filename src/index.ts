@@ -102,6 +102,26 @@ app.get("/api/v1/me", authMiddleware, async (req, res) => {
   }
 });
 
+app.delete("/api/v1/me", authMiddleware, async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM study_logs WHERE user_id = $1", [userId]);
+    await client.query("DELETE FROM tasks WHERE user_id = $1", [userId]);
+    await client.query("DELETE FROM children WHERE user_id = $1", [userId]);
+    await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    await client.query("COMMIT");
+    return res.status(204).send();
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("delete account failed", error);
+    return res.status(500).json({ error: "internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
 const fetchFn = (globalThis as { fetch?: (input: string, init?: any) => Promise<any> })
   .fetch;
 const fetchJson = async (
